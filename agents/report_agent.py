@@ -1,0 +1,91 @@
+from datetime import datetime
+from utils.llm_retry import invoke_with_fallback
+
+
+def report_agent_node(state):
+    # 1. ROBUST DATA RETRIEVAL
+    raw_data = state.get("final_output")
+
+    if not raw_data:
+        raw_data = state.get("multi_results")
+
+    # Read chat history for context
+    chat_history = state.get("chat_history", [])
+    history_context = "\n".join(chat_history[-20:]) if chat_history else ""
+
+    if raw_data and history_context:
+        # Both data and history available — combine them
+        raw_data = f"CONVERSATION HISTORY:\n{history_context}\n\nCURRENT DATA:\n{raw_data}"
+    elif not raw_data and history_context:
+        # No current data — generate report purely from chat history
+        raw_data = f"Generate a comprehensive report based on the following conversation:\n\n{history_context}"
+    elif not raw_data:
+        raw_data = "No data available. Please ask some questions first before generating a report."
+
+    # Read chart buffer from state
+    chart_buffer = state.get("chart_buffer")
+
+    # 2. TIMESTAMP GENERATION
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # 3. PROMPT PREPARATION
+    report_template = """
+### ROLE
+You are an Executive Reporting Specialist. Your mission is to transform raw system data into a high-quality, structured business report.
+
+### DESIGN PRINCIPLES
+1. **Executive Tone**: Maintain a formal, neutral, and authoritative voice. 
+2. **Scannability**: Use bold headers and logical spacing to ensure the report is easy to digest at a glance.
+3. **Internal Logic**: Group related data points (e.g., all user-related info in one section, all market-related info in another).
+4. **Cleanliness**: Strictly remove all technical jargon, database names, SQL syntax, or mentions of "agents."
+
+### DATA SOURCE
+{data}
+
+### REPORT STRUCTURE REQUIREMENTS
+1. **Title**: A professional, centered title (e.g., "Subscription and Market Analysis Report").
+2. **Executive Summary**: A brief (2-3 sentence) overview of the findings.
+3. **Key Findings**: 
+   - Use organized headings.
+   - Use bullet points for specific data like dates, prices, or account details.
+4. **Analysis/Conclusion**: A final statement based on the provided data.
+
+### OUTPUT FORMAT
+Provide the report in Markdown format. Ensure it looks like a physical document.
+
+---
+## [Title of Report]
+---
+
+**Date**: {date}
+
+### 1. Executive Summary
+<Overview here>
+
+### 2. User & Subscription Details
+<Findings here>
+
+### 3. Market Performance & Commodity Trends
+<Findings here>
+
+### 4. Conclusion
+<Final summary here>
+"""
+
+    final_prompt = report_template.format(
+        data=raw_data,
+        date=timestamp
+    )
+
+    response = invoke_with_fallback(
+        final_prompt,
+        temperature=0.0
+    )
+
+    report_content = response.content if hasattr(response, "content") else response
+
+    return {
+        "report_text": report_content,
+        "final_output": "The requested report has been generated. You can download the PDF and DOCX versions below.",
+        "route": "report_agent"
+    }
